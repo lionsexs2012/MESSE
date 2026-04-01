@@ -2,24 +2,23 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Чат | Encrypted Messenger</title>
     <link rel="stylesheet" href="/style.css">
     <script src="/socket.io/socket.io.js"></script>
-    <script src="/crypto.js"></script>
 </head>
-<body>
+<body class="theme-dark">
     <div class="chat-app">
         <!-- Боковая панель -->
         <div class="sidebar">
             <div class="user-info">
                 <div class="avatar">👤</div>
                 <div class="user-details">
-                    <div class="username" id="sidebar-username"></div>
-                    <div class="user-id" id="sidebar-userid"></div>
+                    <div class="username" id="sidebar-username">Загрузка...</div>
+                    <div class="user-id" id="sidebar-userid">---</div>
                 </div>
-                <button onclick="openSettings()" class="settings-icon">⚙️</button>
-                <button onclick="logout()" class="logout-icon">🚪</button>
+                <button onclick="openSettings()" class="icon-btn" title="Настройки">⚙️</button>
+                <button onclick="logout()" class="icon-btn" title="Выйти">🚪</button>
             </div>
             
             <div class="search-box">
@@ -27,7 +26,7 @@
             </div>
             
             <div class="users-list" id="users-list">
-                <div class="loading">Загрузка...</div>
+                <div class="loading">Загрузка пользователей...</div>
             </div>
         </div>
         
@@ -37,115 +36,133 @@
                 <h2>💬 Выберите собеседника</h2>
             </div>
             
-            <div class="messages" id="messages"></div>
+            <div class="messages" id="messages">
+                <div class="empty-chat">👈 Нажмите на пользователя, чтобы начать диалог</div>
+            </div>
             
             <div class="input-area" id="input-area" style="display: none;">
                 <input type="text" id="message-input" placeholder="Введите сообщение..." autocomplete="off">
-                <button onclick="sendMessage()">Отправить 🔒</button>
+                <button id="send-btn" onclick="sendMessage()">📨 Отправить</button>
             </div>
         </div>
     </div>
     
     <!-- Модальное окно настроек -->
-    <div id="settings-modal" class="modal">
+    <div id="settings-modal" class="modal" style="display: none;">
         <div class="modal-content">
             <div class="modal-header">
                 <h3>⚙️ Настройки</h3>
-                <button class="close" onclick="closeSettings()">&times;</button>
+                <button class="close-btn" onclick="closeSettings()">✖</button>
             </div>
             <div class="modal-body">
                 <div class="setting-item">
-                    <label>Ваш ID:</label>
+                    <label>📋 Ваш ID:</label>
                     <div class="user-id-box" id="settings-userid"></div>
-                    <button onclick="copyUserId()" class="copy-btn">📋 Копировать</button>
+                    <button class="copy-btn" onclick="copyUserId()">📋 Копировать ID</button>
                 </div>
                 <div class="setting-item">
-                    <label>Тема оформления:</label>
-                    <select id="theme-select" onchange="changeTheme()">
-                        <option value="dark">Тёмная</option>
-                        <option value="light">Светлая</option>
-                        <option value="purple">Фиолетовая</option>
+                    <label>🎨 Тема оформления:</label>
+                    <select id="theme-select">
+                        <option value="dark">🌙 Тёмная</option>
+                        <option value="light">☀️ Светлая</option>
+                        <option value="purple">💜 Фиолетовая</option>
                     </select>
                 </div>
                 <div class="setting-item">
-                    <label>Уведомления:</label>
-                    <input type="checkbox" id="notifications-toggle"> Включить
-                </div>
-                <div class="setting-item">
-                    <label>Язык:</label>
-                    <select id="language-select" onchange="changeLanguage()">
-                        <option value="ru">Русский</option>
-                        <option value="en">English</option>
-                    </select>
+                    <label>🔔 Уведомления:</label>
+                    <div class="toggle-switch">
+                        <input type="checkbox" id="notifications-toggle">
+                        <span class="toggle-slider"></span>
+                        <span class="toggle-label">Вкл/Выкл</span>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
     
     <script>
+        // ========== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ==========
         const socket = io();
         let username = localStorage.getItem('username');
-        let password = localStorage.getItem('password');
         let userId = localStorage.getItem('userId');
-        let crypto = null;
         let currentChatWith = null;
         let currentChatUserId = null;
         let allUsers = [];
+        let notificationPermission = false;
         
-        if (!username || !password) window.location.href = '/';
+        // ========== ПРОВЕРКА АВТОРИЗАЦИИ ==========
+        if (!username || !userId) {
+            window.location.href = '/';
+        }
         
-        // Инициализация крипто
-        crypto = new MessengerCrypto(password);
+        // ========== ЗАГРУЗКА СОХРАНЁННЫХ НАСТРОЕК ==========
+        function loadSettings() {
+            const savedTheme = localStorage.getItem('theme') || 'dark';
+            const savedNotifications = localStorage.getItem('notifications') === 'true';
+            
+            document.getElementById('theme-select').value = savedTheme;
+            document.getElementById('notifications-toggle').checked = savedNotifications;
+            document.body.className = `theme-${savedTheme}`;
+            notificationPermission = savedNotifications;
+        }
         
+        // ========== СОХРАНЕНИЕ НАСТРОЕК ==========
+        function saveSettings() {
+            const theme = document.getElementById('theme-select').value;
+            const notifications = document.getElementById('notifications-toggle').checked;
+            
+            localStorage.setItem('theme', theme);
+            localStorage.setItem('notifications', notifications);
+            document.body.className = `theme-${theme}`;
+            notificationPermission = notifications;
+            
+            // Отправляем на сервер
+            fetch('/update-settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, settings: { theme, notifications } })
+            });
+        }
+        
+        // ========== ОТОБРАЖЕНИЕ ИНФОРМАЦИИ ПОЛЬЗОВАТЕЛЯ ==========
         document.getElementById('sidebar-username').textContent = username;
         document.getElementById('sidebar-userid').textContent = userId;
         document.getElementById('settings-userid').textContent = userId;
         
+        // ========== АУТЕНТИФИКАЦИЯ SOCKET ==========
         socket.emit('auth', { username, userId });
         
-        // Загрузка пользователей
-        fetch('/users')
-            .then(res => res.json())
-            .then(users => {
-                allUsers = users.filter(u => u.userId !== userId);
-                renderUsersList(allUsers);
-            });
+        // ========== ЗАГРУЗКА СПИСКА ПОЛЬЗОВАТЕЛЕЙ ==========
+        function loadUsers() {
+            fetch('/users')
+                .then(res => res.json())
+                .then(users => {
+                    allUsers = users.filter(u => u.userId !== userId);
+                    renderUsersList(allUsers);
+                })
+                .catch(err => console.error('Ошибка загрузки пользователей:', err));
+        }
         
-        socket.on('users_update', (users) => {
-            allUsers = users.filter(u => u.userId !== userId);
-            renderUsersList(allUsers);
-        });
-        
-        // Получение личных сообщений
-        socket.on('private_message', async (msg) => {
-            if (currentChatUserId === msg.fromUserId) {
-                const decryptedText = await crypto.decrypt(msg.encryptedMessage, msg.iv);
-                addMessage({
-                    from: msg.fromUsername,
-                    text: decryptedText,
-                    time: msg.time,
-                    isOwn: false
-                });
-                scrollToBottom();
-            }
-            updateBadge(msg.fromUserId);
-        });
-        
+        // ========== ОТРИСОВКА СПИСКА ПОЛЬЗОВАТЕЛЕЙ ==========
         function renderUsersList(users) {
             const container = document.getElementById('users-list');
-            const searchTerm = document.getElementById('search-input').value.toLowerCase();
-            const filtered = users.filter(u => 
-                u.username.toLowerCase().includes(searchTerm) || 
-                u.userId.toLowerCase().includes(searchTerm)
-            );
+            const searchTerm = document.getElementById('search-input').value.toLowerCase().trim();
+            
+            let filtered = users;
+            if (searchTerm) {
+                filtered = users.filter(u => 
+                    u.username.toLowerCase().includes(searchTerm) || 
+                    u.userId.toLowerCase().includes(searchTerm)
+                );
+            }
             
             if (filtered.length === 0) {
-                container.innerHTML = '<div class="no-users">👻 Нет пользователей</div>';
+                container.innerHTML = '<div class="no-users">👻 Пользователей не найдено</div>';
                 return;
             }
             
             container.innerHTML = filtered.map(user => `
-                <div class="user-item" onclick="startChat('${user.userId}', '${user.username}')">
+                <div class="user-item" data-userid="${user.userId}" onclick="startChat('${user.userId}', '${escapeHtml(user.username)}')">
                     <div class="user-avatar">👤</div>
                     <div class="user-info-chat">
                         <div class="user-name">${escapeHtml(user.username)}</div>
@@ -156,10 +173,12 @@
             `).join('');
         }
         
+        // ========== ПОИСК ПОЛЬЗОВАТЕЛЕЙ ==========
         function searchUsers() {
             renderUsersList(allUsers);
         }
         
+        // ========== НАЧАТЬ ЧАТ ==========
         async function startChat(targetUserId, targetUsername) {
             currentChatWith = targetUsername;
             currentChatUserId = targetUserId;
@@ -167,116 +186,185 @@
             document.getElementById('chat-header').innerHTML = `<h2>💬 ${escapeHtml(targetUsername)}</h2><div class="user-id-header">${targetUserId}</div>`;
             document.getElementById('messages').innerHTML = '<div class="loading">Загрузка сообщений...</div>';
             document.getElementById('input-area').style.display = 'flex';
+            document.getElementById('message-input').focus();
             
-            // Загружаем историю
-            const res = await fetch('/private-messages', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ userId1: userId, userId2: targetUserId })
-            });
-            
-            const messages = await res.json();
-            const messagesDiv = document.getElementById('messages');
-            messagesDiv.innerHTML = '';
-            
-            for (const msg of messages) {
-                let decryptedText;
-                if (msg.fromUserId === userId) {
-                    decryptedText = await crypto.decrypt(msg.encryptedMessage, msg.iv);
-                } else {
-                    decryptedText = await crypto.decrypt(msg.encryptedMessage, msg.iv);
-                }
-                addMessage({
-                    from: msg.fromUsername,
-                    text: decryptedText,
-                    time: msg.time,
-                    isOwn: msg.fromUserId === userId
+            // Загружаем историю сообщений
+            try {
+                const res = await fetch('/private-messages', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId1: userId, userId2: targetUserId })
                 });
+                
+                const messages = await res.json();
+                const messagesDiv = document.getElementById('messages');
+                messagesDiv.innerHTML = '';
+                
+                if (messages.length === 0) {
+                    messagesDiv.innerHTML = '<div class="empty-chat">💭 Нет сообщений. Напишите что-нибудь!</div>';
+                } else {
+                    for (const msg of messages) {
+                        addMessageToChat({
+                            from: msg.fromUsername,
+                            text: msg.encryptedMessage,
+                            time: msg.time,
+                            isOwn: msg.fromUserId === userId
+                        });
+                    }
+                }
+                scrollToBottom();
+            } catch (err) {
+                console.error('Ошибка загрузки сообщений:', err);
+                document.getElementById('messages').innerHTML = '<div class="error-message">❌ Ошибка загрузки сообщений</div>';
             }
-            scrollToBottom();
         }
         
-        async function sendMessage() {
+        // ========== ОТПРАВКА СООБЩЕНИЯ ==========
+        function sendMessage() {
             const input = document.getElementById('message-input');
             const text = input.value.trim();
-            if (!text || !currentChatUserId) return;
             
-            const encrypted = await crypto.encrypt(text);
+            if (!text) {
+                input.style.border = '1px solid #ff4444';
+                setTimeout(() => input.style.border = '', 1000);
+                return;
+            }
             
+            if (!currentChatUserId) {
+                alert('Сначала выберите собеседника');
+                return;
+            }
+            
+            // Отправляем через сокет
             socket.emit('private_message', {
                 toUserId: currentChatUserId,
-                encryptedMessage: encrypted.encrypted,
-                iv: encrypted.iv
+                encryptedMessage: text,
+                iv: []
             });
             
-            addMessage({
+            // Добавляем сообщение в чат
+            addMessageToChat({
                 from: username,
                 text: text,
                 time: new Date().toLocaleTimeString(),
                 isOwn: true
             });
             
+            // Очищаем поле ввода
             input.value = '';
             input.focus();
             scrollToBottom();
         }
         
-        function addMessage(msg) {
+        // ========== ДОБАВЛЕНИЕ СООБЩЕНИЯ В ЧАТ ==========
+        function addMessageToChat(msg) {
             const messagesDiv = document.getElementById('messages');
+            
+            // Убираем заглушку если была
+            if (messagesDiv.querySelector('.empty-chat')) {
+                messagesDiv.innerHTML = '';
+            }
+            
             const div = document.createElement('div');
             div.className = 'message';
             if (msg.isOwn) div.classList.add('own');
+            
             div.innerHTML = `
                 <div class="message-header">
                     <strong>${escapeHtml(msg.isOwn ? 'Вы' : msg.from)}</strong>
                     <span class="time">${msg.time}</span>
                 </div>
                 <div class="message-text">${escapeHtml(msg.text)}</div>
-                <div class="encrypted-badge">🔒</div>
             `;
+            
             messagesDiv.appendChild(div);
         }
         
-        function updateBadge(fromUserId) {
-            const badge = document.getElementById(`badge-${fromUserId}`);
+        // ========== ПОЛУЧЕНИЕ СООБЩЕНИЯ ОТ SOCKET ==========
+        socket.on('private_message', (msg) => {
+            // Если это сообщение для текущего чата
+            if (currentChatUserId === msg.fromUserId) {
+                addMessageToChat({
+                    from: msg.fromUsername,
+                    text: msg.encryptedMessage,
+                    time: msg.time,
+                    isOwn: false
+                });
+                scrollToBottom();
+                
+                // Воспроизводим звук если уведомления включены
+                if (notificationPermission) {
+                    playNotificationSound();
+                }
+            }
+            
+            // Показываем индикатор у пользователя
+            const badge = document.getElementById(`badge-${msg.fromUserId}`);
             if (badge) badge.textContent = '●';
+        });
+        
+        // ========== ОБНОВЛЕНИЕ СПИСКА ПОЛЬЗОВАТЕЛЕЙ ==========
+        socket.on('users_update', (users) => {
+            allUsers = users.filter(u => u.userId !== userId);
+            renderUsersList(allUsers);
+        });
+        
+        // ========== УБИРАЕМ ИНДИКАТОР ПРИ ОТКРЫТИИ ЧАТА ==========
+        function clearBadge(userId) {
+            const badge = document.getElementById(`badge-${userId}`);
+            if (badge) badge.textContent = '';
         }
         
+        // ========== НАСТРОЙКИ: ОТКРЫТЬ ==========
         function openSettings() {
-            document.getElementById('settings-modal').style.display = 'flex';
+            const modal = document.getElementById('settings-modal');
+            modal.style.display = 'flex';
+            // Обновляем текущие настройки в модалке
+            document.getElementById('theme-select').value = localStorage.getItem('theme') || 'dark';
+            document.getElementById('notifications-toggle').checked = localStorage.getItem('notifications') === 'true';
         }
         
+        // ========== НАСТРОЙКИ: ЗАКРЫТЬ ==========
         function closeSettings() {
-            document.getElementById('settings-modal').style.display = 'none';
+            const modal = document.getElementById('settings-modal');
+            modal.style.display = 'none';
         }
         
+        // ========== КОПИРОВАТЬ ID ==========
         function copyUserId() {
-            navigator.clipboard.writeText(userId);
-            alert('ID скопирован: ' + userId);
+            const userId = document.getElementById('settings-userid').textContent;
+            navigator.clipboard.writeText(userId).then(() => {
+                const btn = event.target;
+                const originalText = btn.textContent;
+                btn.textContent = '✅ Скопировано!';
+                setTimeout(() => btn.textContent = originalText, 1500);
+            }).catch(() => {
+                alert('Не удалось скопировать. Выделите ID вручную: ' + userId);
+            });
         }
         
-        function changeTheme() {
-            const theme = document.getElementById('theme-select').value;
-            document.body.className = `theme-${theme}`;
-            localStorage.setItem('theme', theme);
+        // ========== ЗВУК УВЕДОМЛЕНИЯ ==========
+        function playNotificationSound() {
+            const audio = new Audio('data:audio/wav;base64,U3RlYWx0aCBpcyBhbiBlbnRlcnByaXNlIHRoYXQgcHJvdmlkZXMgYSBjb21wbGV0ZSBhbmQgY29tcHJlaGVuc2l2ZSBlY29zeXN0ZW0gZm9yIGRldmVsb3BlcnMgdG8gYnVpbGQgYW5kIGRlcGxveSBhcHBsaWNhdGlvbnM=');
+            audio.play().catch(e => console.log('Звук не воспроизведён:', e));
         }
         
-        function changeLanguage() {
-            const lang = document.getElementById('language-select').value;
-            localStorage.setItem('language', lang);
-        }
-        
+        // ========== ВЫХОД ==========
         function logout() {
-            localStorage.clear();
+            localStorage.removeItem('username');
+            localStorage.removeItem('userId');
+            localStorage.removeItem('password');
             window.location.href = '/';
         }
         
+        // ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
         function scrollToBottom() {
             const messagesDiv = document.getElementById('messages');
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
         
         function escapeHtml(str) {
+            if (!str) return '';
             return str.replace(/[&<>]/g, function(m) {
                 if (m === '&') return '&amp;';
                 if (m === '<') return '&lt;';
@@ -285,18 +373,35 @@
             });
         }
         
-        document.getElementById('message-input').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') sendMessage();
+        // ========== ОБРАБОТЧИКИ СОБЫТИЙ ==========
+        document.getElementById('theme-select').addEventListener('change', function() {
+            saveSettings();
         });
         
-        // Загрузка сохранённых настроек
-        const savedTheme = localStorage.getItem('theme');
-        if (savedTheme) {
-            document.getElementById('theme-select').value = savedTheme;
-            document.body.className = `theme-${savedTheme}`;
-        }
+        document.getElementById('notifications-toggle').addEventListener('change', function() {
+            saveSettings();
+        });
         
-        document.getElementById('message-input').focus();
+        document.getElementById('message-input').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+        
+        // Закрытие модалки по клику вне окна
+        document.getElementById('settings-modal').addEventListener('click', function(e) {
+            if (e.target === this) {
+                closeSettings();
+            }
+        });
+        
+        // ========== ЗАПУСК ==========
+        loadSettings();
+        loadUsers();
+        
+        // Фокус на поиск при загрузке
+        setTimeout(() => document.getElementById('search-input').focus(), 100);
     </script>
 </body>
 </html>
