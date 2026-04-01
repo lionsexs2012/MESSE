@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Чат | Мессенджер</title>
+    <link rel="stylesheet" href="/style.css">
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            <h2>💬 Мессенджер</h2>
+            <div>
+                <span id="username-display"></span>
+                <button onclick="logout()" class="logout-btn">Выйти</button>
+            </div>
+        </div>
+        
+        <div class="messages" id="messages"></div>
+        
+        <div class="input-area">
+            <input type="text" id="message-input" placeholder="Введите сообщение..." autocomplete="off">
+            <button onclick="sendMessage()">Отправить</button>
+        </div>
+    </div>
+    
+    <script>
+        const socket = io();
+        let username = localStorage.getItem('username');
+        
+        if (!username) {
+            window.location.href = '/';
+        }
+        
+        document.getElementById('username-display').textContent = username;
+        socket.emit('auth', username);
+        
+        socket.on('history', (messages) => {
+            const messagesDiv = document.getElementById('messages');
+            messagesDiv.innerHTML = '';
+            messages.forEach(msg => addMessage(msg));
+            scrollToBottom();
+        });
+        
+        socket.on('message', (msg) => {
+            addMessage(msg);
+            scrollToBottom();
+        });
+        
+        socket.on('user_joined', (data) => {
+            addSystemMessage(`${data.username} присоединился`);
+        });
+        
+        socket.on('user_left', (data) => {
+            addSystemMessage(`${data.username} покинул чат`);
+        });
+        
+        function addMessage(msg) {
+            const messagesDiv = document.getElementById('messages');
+            const div = document.createElement('div');
+            div.className = 'message';
+            if (msg.username === username) div.classList.add('own');
+            div.innerHTML = `
+                <div class="message-header">
+                    <strong>${escapeHtml(msg.username)}</strong>
+                    <span class="time">${msg.time}</span>
+                </div>
+                <div class="message-text">${escapeHtml(msg.text)}</div>
+            `;
+            messagesDiv.appendChild(div);
+        }
+        
+        function addSystemMessage(text) {
+            const messagesDiv = document.getElementById('messages');
+            const div = document.createElement('div');
+            div.className = 'system-message';
+            div.textContent = text;
+            messagesDiv.appendChild(div);
+        }
+        
+        function sendMessage() {
+            const input = document.getElementById('message-input');
+            const text = input.value.trim();
+            if (!text) return;
+            socket.emit('message', { text });
+            input.value = '';
+            input.focus();
+        }
+        
+        function logout() {
+            localStorage.removeItem('username');
+            window.location.href = '/';
+        }
+        
+        function scrollToBottom() {
+            const messagesDiv = document.getElementById('messages');
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+        
+        function escapeHtml(str) {
+            return str.replace(/[&<>]/g, function(m) {
+                if (m === '&') return '&amp;';
+                if (m === '<') return '&lt;';
+                if (m === '>') return '&gt;';
+                return m;
+            });
+        }
+        
+        document.getElementById('message-input').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+    </script>
+</body>
+</html>
