@@ -3,9 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Чат | Мессенджер</title>
+    <title>Чат | Encrypted Messenger</title>
     <link rel="stylesheet" href="/style.css">
     <script src="/socket.io/socket.io.js"></script>
+    <script src="/crypto.js"></script>
 </head>
 <body>
     <div class="chat-app">
@@ -13,17 +14,16 @@
         <div class="sidebar">
             <div class="user-info">
                 <div class="avatar">👤</div>
-                <div class="username" id="sidebar-username"></div>
+                <div class="user-details">
+                    <div class="username" id="sidebar-username"></div>
+                    <div class="user-id" id="sidebar-userid"></div>
+                </div>
+                <button onclick="openSettings()" class="settings-icon">⚙️</button>
                 <button onclick="logout()" class="logout-icon">🚪</button>
             </div>
             
             <div class="search-box">
-                <input type="text" id="search-input" placeholder="🔍 Поиск по имени..." onkeyup="searchUsers()">
-            </div>
-            
-            <div class="tabs-chat">
-                <button class="tab-chat active" onclick="switchChat('general')">💬 Общий чат</button>
-                <button class="tab-chat" onclick="switchChat('private')">💌 Личные сообщения</button>
+                <input type="text" id="search-input" placeholder="🔍 Поиск по имени или ID..." onkeyup="searchUsers()">
             </div>
             
             <div class="users-list" id="users-list">
@@ -34,14 +34,50 @@
         <!-- Основной чат -->
         <div class="main-chat">
             <div class="chat-header" id="chat-header">
-                <h2>💬 Общий чат</h2>
+                <h2>💬 Выберите собеседника</h2>
             </div>
             
             <div class="messages" id="messages"></div>
             
-            <div class="input-area">
+            <div class="input-area" id="input-area" style="display: none;">
                 <input type="text" id="message-input" placeholder="Введите сообщение..." autocomplete="off">
-                <button onclick="sendMessage()">Отправить</button>
+                <button onclick="sendMessage()">Отправить 🔒</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Модальное окно настроек -->
+    <div id="settings-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>⚙️ Настройки</h3>
+                <button class="close" onclick="closeSettings()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="setting-item">
+                    <label>Ваш ID:</label>
+                    <div class="user-id-box" id="settings-userid"></div>
+                    <button onclick="copyUserId()" class="copy-btn">📋 Копировать</button>
+                </div>
+                <div class="setting-item">
+                    <label>Тема оформления:</label>
+                    <select id="theme-select" onchange="changeTheme()">
+                        <option value="dark">Тёмная</option>
+                        <option value="light">Светлая</option>
+                        <option value="purple">Фиолетовая</option>
+                    </select>
+                </div>
+                <div class="setting-item">
+                    <label>Уведомления:</label>
+                    <input type="checkbox" id="notifications-toggle"> Включить
+                </div>
+                <div class="setting-item">
+                    <label>Язык:</label>
+                    <select id="language-select" onchange="changeLanguage()">
+                        <option value="ru">Русский</option>
+                        <option value="en">English</option>
+                    </select>
+                </div>
             </div>
         </div>
     </div>
@@ -49,58 +85,59 @@
     <script>
         const socket = io();
         let username = localStorage.getItem('username');
-        let currentChat = 'general';
-        let currentPrivateWith = null;
+        let password = localStorage.getItem('password');
+        let userId = localStorage.getItem('userId');
+        let crypto = null;
+        let currentChatWith = null;
+        let currentChatUserId = null;
         let allUsers = [];
         
-        if (!username) window.location.href = '/';
+        if (!username || !password) window.location.href = '/';
+        
+        // Инициализация крипто
+        crypto = new MessengerCrypto(password);
         
         document.getElementById('sidebar-username').textContent = username;
-        socket.emit('auth', username);
+        document.getElementById('sidebar-userid').textContent = userId;
+        document.getElementById('settings-userid').textContent = userId;
         
-        // Получение списка пользователей
+        socket.emit('auth', { username, userId });
+        
+        // Загрузка пользователей
         fetch('/users')
             .then(res => res.json())
             .then(users => {
-                allUsers = users.filter(u => u !== username);
+                allUsers = users.filter(u => u.userId !== userId);
                 renderUsersList(allUsers);
             });
         
         socket.on('users_update', (users) => {
-            allUsers = users.filter(u => u !== username);
+            allUsers = users.filter(u => u.userId !== userId);
             renderUsersList(allUsers);
         });
         
-        // Общий чат
-        socket.on('history', (messages) => {
-            if (currentChat === 'general') {
-                const messagesDiv = document.getElementById('messages');
-                messagesDiv.innerHTML = '';
-                messages.forEach(msg => addMessage(msg));
-                scrollToBottom();
-            }
-        });
-        
-        socket.on('message', (msg) => {
-            if (currentChat === 'general') {
-                addMessage(msg);
-                scrollToBottom();
-            }
-        });
-        
-        // Личные сообщения
+        // Получение личных сообщений
         socket.on('private_message', async (msg) => {
-            if (currentChat === 'private' && currentPrivateWith === msg.from) {
-                addPrivateMessage(msg);
+            if (currentChatUserId === msg.fromUserId) {
+                const decryptedText = await crypto.decrypt(msg.encryptedMessage, msg.iv);
+                addMessage({
+                    from: msg.fromUsername,
+                    text: decryptedText,
+                    time: msg.time,
+                    isOwn: false
+                });
                 scrollToBottom();
             }
-            updateUsersListBadge(msg.from);
+            updateBadge(msg.fromUserId);
         });
         
         function renderUsersList(users) {
             const container = document.getElementById('users-list');
             const searchTerm = document.getElementById('search-input').value.toLowerCase();
-            const filtered = users.filter(u => u.toLowerCase().includes(searchTerm));
+            const filtered = users.filter(u => 
+                u.username.toLowerCase().includes(searchTerm) || 
+                u.userId.toLowerCase().includes(searchTerm)
+            );
             
             if (filtered.length === 0) {
                 container.innerHTML = '<div class="no-users">👻 Нет пользователей</div>';
@@ -108,10 +145,13 @@
             }
             
             container.innerHTML = filtered.map(user => `
-                <div class="user-item" onclick="startPrivateChat('${user}')">
+                <div class="user-item" onclick="startChat('${user.userId}', '${user.username}')">
                     <div class="user-avatar">👤</div>
-                    <div class="user-name">${escapeHtml(user)}</div>
-                    <div class="user-badge" id="badge-${user}"></div>
+                    <div class="user-info-chat">
+                        <div class="user-name">${escapeHtml(user.username)}</div>
+                        <div class="user-id-small">${user.userId}</div>
+                    </div>
+                    <div class="user-badge" id="badge-${user.userId}"></div>
                 </div>
             `).join('');
         }
@@ -120,113 +160,114 @@
             renderUsersList(allUsers);
         }
         
-        function startPrivateChat(user) {
-            currentChat = 'private';
-            currentPrivateWith = user;
-            document.querySelector('.tab-chat.active').classList.remove('active');
-            document.querySelectorAll('.tab-chat')[1].classList.add('active');
-            document.getElementById('chat-header').innerHTML = `<h2>💌 Личный чат с ${escapeHtml(user)}</h2>`;
+        async function startChat(targetUserId, targetUsername) {
+            currentChatWith = targetUsername;
+            currentChatUserId = targetUserId;
+            
+            document.getElementById('chat-header').innerHTML = `<h2>💬 ${escapeHtml(targetUsername)}</h2><div class="user-id-header">${targetUserId}</div>`;
             document.getElementById('messages').innerHTML = '<div class="loading">Загрузка сообщений...</div>';
+            document.getElementById('input-area').style.display = 'flex';
             
-            socket.emit('join_private', user);
-            
-            fetch('/private-messages', {
+            // Загружаем историю
+            const res = await fetch('/private-messages', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ user1: username, user2: user })
-            })
-            .then(res => res.json())
-            .then(messages => {
-                const messagesDiv = document.getElementById('messages');
-                messagesDiv.innerHTML = '';
-                messages.forEach(msg => addPrivateMessage(msg));
-                scrollToBottom();
+                body: JSON.stringify({ userId1: userId, userId2: targetUserId })
             });
+            
+            const messages = await res.json();
+            const messagesDiv = document.getElementById('messages');
+            messagesDiv.innerHTML = '';
+            
+            for (const msg of messages) {
+                let decryptedText;
+                if (msg.fromUserId === userId) {
+                    decryptedText = await crypto.decrypt(msg.encryptedMessage, msg.iv);
+                } else {
+                    decryptedText = await crypto.decrypt(msg.encryptedMessage, msg.iv);
+                }
+                addMessage({
+                    from: msg.fromUsername,
+                    text: decryptedText,
+                    time: msg.time,
+                    isOwn: msg.fromUserId === userId
+                });
+            }
+            scrollToBottom();
         }
         
-        function switchChat(type) {
-            if (type === 'general') {
-                currentChat = 'general';
-                currentPrivateWith = null;
-                document.getElementById('chat-header').innerHTML = '<h2>💬 Общий чат</h2>';
-                document.getElementById('messages').innerHTML = '';
-                fetch('/messages')
-                    .then(res => res.json())
-                    .then(messages => {
-                        messages.forEach(msg => addMessage(msg));
-                        scrollToBottom();
-                    });
-            } else if (type === 'private') {
-                if (currentPrivateWith) {
-                    startPrivateChat(currentPrivateWith);
-                } else {
-                    currentChat = 'private';
-                    document.getElementById('chat-header').innerHTML = '<h2>💌 Выберите пользователя слева</h2>';
-                    document.getElementById('messages').innerHTML = '<div class="no-messages">👈 Нажмите на пользователя, чтобы начать диалог</div>';
-                }
-            }
+        async function sendMessage() {
+            const input = document.getElementById('message-input');
+            const text = input.value.trim();
+            if (!text || !currentChatUserId) return;
             
-            document.querySelectorAll('.tab-chat').forEach((btn, i) => {
-                if ((type === 'general' && i === 0) || (type === 'private' && i === 1)) {
-                    btn.classList.add('active');
-                } else {
-                    btn.classList.remove('active');
-                }
+            const encrypted = await crypto.encrypt(text);
+            
+            socket.emit('private_message', {
+                toUserId: currentChatUserId,
+                encryptedMessage: encrypted.encrypted,
+                iv: encrypted.iv
             });
+            
+            addMessage({
+                from: username,
+                text: text,
+                time: new Date().toLocaleTimeString(),
+                isOwn: true
+            });
+            
+            input.value = '';
+            input.focus();
+            scrollToBottom();
         }
         
         function addMessage(msg) {
             const messagesDiv = document.getElementById('messages');
             const div = document.createElement('div');
             div.className = 'message';
-            if (msg.username === username) div.classList.add('own');
+            if (msg.isOwn) div.classList.add('own');
             div.innerHTML = `
                 <div class="message-header">
-                    <strong>${escapeHtml(msg.username)}</strong>
+                    <strong>${escapeHtml(msg.isOwn ? 'Вы' : msg.from)}</strong>
                     <span class="time">${msg.time}</span>
                 </div>
                 <div class="message-text">${escapeHtml(msg.text)}</div>
+                <div class="encrypted-badge">🔒</div>
             `;
             messagesDiv.appendChild(div);
         }
         
-        function addPrivateMessage(msg) {
-            const messagesDiv = document.getElementById('messages');
-            const div = document.createElement('div');
-            div.className = 'message';
-            if (msg.from === username) div.classList.add('own');
-            div.innerHTML = `
-                <div class="message-header">
-                    <strong>${escapeHtml(msg.from === username ? 'Вы' : msg.from)}</strong>
-                    <span class="time">${msg.time}</span>
-                </div>
-                <div class="message-text">${escapeHtml(msg.text)}</div>
-            `;
-            messagesDiv.appendChild(div);
-        }
-        
-        function sendMessage() {
-            const input = document.getElementById('message-input');
-            const text = input.value.trim();
-            if (!text) return;
-            
-            if (currentChat === 'general') {
-                socket.emit('message', { text });
-            } else if (currentChat === 'private' && currentPrivateWith) {
-                socket.emit('private_message', { to: currentPrivateWith, text });
-            }
-            
-            input.value = '';
-            input.focus();
-        }
-        
-        function updateUsersListBadge(from) {
-            const badge = document.getElementById(`badge-${from}`);
+        function updateBadge(fromUserId) {
+            const badge = document.getElementById(`badge-${fromUserId}`);
             if (badge) badge.textContent = '●';
         }
         
+        function openSettings() {
+            document.getElementById('settings-modal').style.display = 'flex';
+        }
+        
+        function closeSettings() {
+            document.getElementById('settings-modal').style.display = 'none';
+        }
+        
+        function copyUserId() {
+            navigator.clipboard.writeText(userId);
+            alert('ID скопирован: ' + userId);
+        }
+        
+        function changeTheme() {
+            const theme = document.getElementById('theme-select').value;
+            document.body.className = `theme-${theme}`;
+            localStorage.setItem('theme', theme);
+        }
+        
+        function changeLanguage() {
+            const lang = document.getElementById('language-select').value;
+            localStorage.setItem('language', lang);
+        }
+        
         function logout() {
-            localStorage.removeItem('username');
+            localStorage.clear();
             window.location.href = '/';
         }
         
@@ -247,6 +288,15 @@
         document.getElementById('message-input').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') sendMessage();
         });
+        
+        // Загрузка сохранённых настроек
+        const savedTheme = localStorage.getItem('theme');
+        if (savedTheme) {
+            document.getElementById('theme-select').value = savedTheme;
+            document.body.className = `theme-${savedTheme}`;
+        }
+        
+        document.getElementById('message-input').focus();
     </script>
 </body>
 </html>
