@@ -3,13 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Вход | Мессенджер</title>
+    <title>Вход | Encrypted Messenger</title>
     <link rel="stylesheet" href="/style.css">
 </head>
 <body>
     <div class="container">
         <div class="form-box">
-            <h1>📱 Мессенджер</h1>
+            <div class="logo">
+                <div class="lock-icon">🔒</div>
+                <h1>Encrypted Messenger</h1>
+                <p class="subtitle">Сквозное шифрование</p>
+            </div>
+            
             <div class="tabs">
                 <button class="tab-btn active" data-tab="login">Вход</button>
                 <button class="tab-btn" data-tab="register">Регистрация</button>
@@ -52,6 +57,8 @@
             
             if (data.success) {
                 localStorage.setItem('username', username);
+                localStorage.setItem('password', password);
+                localStorage.setItem('userId', data.userId);
                 window.location.href = '/chat.html';
             } else {
                 errorDiv.textContent = data.error;
@@ -82,7 +89,7 @@
             const data = await res.json();
             
             if (data.success) {
-                alert('Регистрация успешна! Теперь войдите.');
+                alert(`Регистрация успешна!\nВаш ID: ${data.userId}\nСохраните его для связи с друзьями`);
                 document.getElementById('reg-username').value = '';
                 document.getElementById('reg-password').value = '';
                 document.querySelector('[data-tab="login"]').click();
