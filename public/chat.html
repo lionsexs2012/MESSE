@@ -8,53 +8,172 @@
     <script src="/socket.io/socket.io.js"></script>
 </head>
 <body>
-    <div class="chat-container">
-        <div class="chat-header">
-            <h2>💬 Мессенджер</h2>
-            <div>
-                <span id="username-display"></span>
-                <button onclick="logout()" class="logout-btn">Выйти</button>
+    <div class="chat-app">
+        <!-- Боковая панель -->
+        <div class="sidebar">
+            <div class="user-info">
+                <div class="avatar">👤</div>
+                <div class="username" id="sidebar-username"></div>
+                <button onclick="logout()" class="logout-icon">🚪</button>
+            </div>
+            
+            <div class="search-box">
+                <input type="text" id="search-input" placeholder="🔍 Поиск по имени..." onkeyup="searchUsers()">
+            </div>
+            
+            <div class="tabs-chat">
+                <button class="tab-chat active" onclick="switchChat('general')">💬 Общий чат</button>
+                <button class="tab-chat" onclick="switchChat('private')">💌 Личные сообщения</button>
+            </div>
+            
+            <div class="users-list" id="users-list">
+                <div class="loading">Загрузка...</div>
             </div>
         </div>
         
-        <div class="messages" id="messages"></div>
-        
-        <div class="input-area">
-            <input type="text" id="message-input" placeholder="Введите сообщение..." autocomplete="off">
-            <button onclick="sendMessage()">Отправить</button>
+        <!-- Основной чат -->
+        <div class="main-chat">
+            <div class="chat-header" id="chat-header">
+                <h2>💬 Общий чат</h2>
+            </div>
+            
+            <div class="messages" id="messages"></div>
+            
+            <div class="input-area">
+                <input type="text" id="message-input" placeholder="Введите сообщение..." autocomplete="off">
+                <button onclick="sendMessage()">Отправить</button>
+            </div>
         </div>
     </div>
     
     <script>
         const socket = io();
         let username = localStorage.getItem('username');
+        let currentChat = 'general';
+        let currentPrivateWith = null;
+        let allUsers = [];
         
-        if (!username) {
-            window.location.href = '/';
-        }
+        if (!username) window.location.href = '/';
         
-        document.getElementById('username-display').textContent = username;
+        document.getElementById('sidebar-username').textContent = username;
         socket.emit('auth', username);
         
+        // Получение списка пользователей
+        fetch('/users')
+            .then(res => res.json())
+            .then(users => {
+                allUsers = users.filter(u => u !== username);
+                renderUsersList(allUsers);
+            });
+        
+        socket.on('users_update', (users) => {
+            allUsers = users.filter(u => u !== username);
+            renderUsersList(allUsers);
+        });
+        
+        // Общий чат
         socket.on('history', (messages) => {
-            const messagesDiv = document.getElementById('messages');
-            messagesDiv.innerHTML = '';
-            messages.forEach(msg => addMessage(msg));
-            scrollToBottom();
+            if (currentChat === 'general') {
+                const messagesDiv = document.getElementById('messages');
+                messagesDiv.innerHTML = '';
+                messages.forEach(msg => addMessage(msg));
+                scrollToBottom();
+            }
         });
         
         socket.on('message', (msg) => {
-            addMessage(msg);
-            scrollToBottom();
+            if (currentChat === 'general') {
+                addMessage(msg);
+                scrollToBottom();
+            }
         });
         
-        socket.on('user_joined', (data) => {
-            addSystemMessage(`${data.username} присоединился`);
+        // Личные сообщения
+        socket.on('private_message', async (msg) => {
+            if (currentChat === 'private' && currentPrivateWith === msg.from) {
+                addPrivateMessage(msg);
+                scrollToBottom();
+            }
+            updateUsersListBadge(msg.from);
         });
         
-        socket.on('user_left', (data) => {
-            addSystemMessage(`${data.username} покинул чат`);
-        });
+        function renderUsersList(users) {
+            const container = document.getElementById('users-list');
+            const searchTerm = document.getElementById('search-input').value.toLowerCase();
+            const filtered = users.filter(u => u.toLowerCase().includes(searchTerm));
+            
+            if (filtered.length === 0) {
+                container.innerHTML = '<div class="no-users">👻 Нет пользователей</div>';
+                return;
+            }
+            
+            container.innerHTML = filtered.map(user => `
+                <div class="user-item" onclick="startPrivateChat('${user}')">
+                    <div class="user-avatar">👤</div>
+                    <div class="user-name">${escapeHtml(user)}</div>
+                    <div class="user-badge" id="badge-${user}"></div>
+                </div>
+            `).join('');
+        }
+        
+        function searchUsers() {
+            renderUsersList(allUsers);
+        }
+        
+        function startPrivateChat(user) {
+            currentChat = 'private';
+            currentPrivateWith = user;
+            document.querySelector('.tab-chat.active').classList.remove('active');
+            document.querySelectorAll('.tab-chat')[1].classList.add('active');
+            document.getElementById('chat-header').innerHTML = `<h2>💌 Личный чат с ${escapeHtml(user)}</h2>`;
+            document.getElementById('messages').innerHTML = '<div class="loading">Загрузка сообщений...</div>';
+            
+            socket.emit('join_private', user);
+            
+            fetch('/private-messages', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ user1: username, user2: user })
+            })
+            .then(res => res.json())
+            .then(messages => {
+                const messagesDiv = document.getElementById('messages');
+                messagesDiv.innerHTML = '';
+                messages.forEach(msg => addPrivateMessage(msg));
+                scrollToBottom();
+            });
+        }
+        
+        function switchChat(type) {
+            if (type === 'general') {
+                currentChat = 'general';
+                currentPrivateWith = null;
+                document.getElementById('chat-header').innerHTML = '<h2>💬 Общий чат</h2>';
+                document.getElementById('messages').innerHTML = '';
+                fetch('/messages')
+                    .then(res => res.json())
+                    .then(messages => {
+                        messages.forEach(msg => addMessage(msg));
+                        scrollToBottom();
+                    });
+            } else if (type === 'private') {
+                if (currentPrivateWith) {
+                    startPrivateChat(currentPrivateWith);
+                } else {
+                    currentChat = 'private';
+                    document.getElementById('chat-header').innerHTML = '<h2>💌 Выберите пользователя слева</h2>';
+                    document.getElementById('messages').innerHTML = '<div class="no-messages">👈 Нажмите на пользователя, чтобы начать диалог</div>';
+                }
+            }
+            
+            document.querySelectorAll('.tab-chat').forEach((btn, i) => {
+                if ((type === 'general' && i === 0) || (type === 'private' && i === 1)) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+        }
         
         function addMessage(msg) {
             const messagesDiv = document.getElementById('messages');
@@ -71,11 +190,18 @@
             messagesDiv.appendChild(div);
         }
         
-        function addSystemMessage(text) {
+        function addPrivateMessage(msg) {
             const messagesDiv = document.getElementById('messages');
             const div = document.createElement('div');
-            div.className = 'system-message';
-            div.textContent = text;
+            div.className = 'message';
+            if (msg.from === username) div.classList.add('own');
+            div.innerHTML = `
+                <div class="message-header">
+                    <strong>${escapeHtml(msg.from === username ? 'Вы' : msg.from)}</strong>
+                    <span class="time">${msg.time}</span>
+                </div>
+                <div class="message-text">${escapeHtml(msg.text)}</div>
+            `;
             messagesDiv.appendChild(div);
         }
         
@@ -83,9 +209,20 @@
             const input = document.getElementById('message-input');
             const text = input.value.trim();
             if (!text) return;
-            socket.emit('message', { text });
+            
+            if (currentChat === 'general') {
+                socket.emit('message', { text });
+            } else if (currentChat === 'private' && currentPrivateWith) {
+                socket.emit('private_message', { to: currentPrivateWith, text });
+            }
+            
             input.value = '';
             input.focus();
+        }
+        
+        function updateUsersListBadge(from) {
+            const badge = document.getElementById(`badge-${from}`);
+            if (badge) badge.textContent = '●';
         }
         
         function logout() {
